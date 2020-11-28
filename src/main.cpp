@@ -63,14 +63,12 @@
 // stop the data stream and prevent interrupts between the 
 // data packets if desired.
 //
-#define DATAPIN         32           // ESP32 pin D32
-#define LAPIN           (5)             //logic Analyzer PIN
-#define INTERPUTPIN     7
-#define SQUELCHPIN      (4)
+#define DATAPIN         (D1)            // data pint D1 (GPIO5) on D1 mini
+#define SQUELCHPIN      (D2)            // Squelch pin D2 (GPIO4) on D1 mini
 #define SYNCPULSECNT    (4)             // 4 pulses (8 edges)
 #define SYNCPULSEEDGES  (SYNCPULSECNT*2)
 
-#define DATABYTESCNT_MIN (7) // Minimum number of data bytes
+#define DATABYTESCNT_MIN    (7)         // Minimum number of data bytes
 #define DATABITSCNT_MIN     (DATABYTESCNT_MIN*8)// 7 bytes * 8 bits
 #define DATABITSEDGES_MIN   (DATABITSCNT_MIN*2)
 
@@ -121,7 +119,6 @@ int lastStrikeCount = 0;
 bool activeStrikes = false;
 unsigned long strikeLast = 0;
 
-
 //const unsigned int tempOffset = 2.4;  // offset in degrees C
 //const unsigned int tempOffset = 0;  // offset in degrees C
 //const unsigned int tempOffset10th = 24;  // offset in 10th degrees C
@@ -132,7 +129,7 @@ const float winddirections[] = { 315.0, 247.5, 292.5, 270.0,
                                  67.5, 135.0, 90.0, 112.5,
                                  45.0, 157.5, 22.5, 180.0 };
                                  
-char * acurite_5n1_winddirection_str[] =
+char const * const acurite_5n1_winddirection_str[] =
     {"NW",  // 0  315
      "WSW", // 1  247.5
      "WNW", // 2  292.5
@@ -184,7 +181,7 @@ void PrintHex8(uint8_t *data, uint8_t length) // prints 8-bit data in hex
  * Search backwards 8 times looking for 4 pulses
  * approximately 600 uS long.
  */
-bool isSync(unsigned int idx) 
+ICACHE_RAM_ATTR bool isSync(unsigned int idx) 
 {
    // check if we've received 4 pulses of matching timing
    for( int i = 0; i < SYNCPULSEEDGES; i += 2 )
@@ -204,21 +201,20 @@ bool isSync(unsigned int idx)
 }
 
 /* Interrupt 1 handler 
- * Tied to pin 3 INT1 of arduino.
  * Set to interrupt on edge (level change) high or low transition.
- * Change the state of the Arduino LED (pin 13) on each interrupt. 
- * This allows scoping pin 13 to see the interrupt / data pulse train.
+ * Change the state of the LED on each interrupt. 
+ * This allows scoping LED pin to see the interrupt / data pulse train.
  */
-void handler() 
+ICACHE_RAM_ATTR void handler() 
 {
    static unsigned long duration = 0;
    static unsigned long lastTime = 0;
    static unsigned int ringIndex = 0;
-   static unsigned int syncCount = 0;
+   //static unsigned int syncCount = 0;
    static unsigned int bitState  = 0;
 
    bitState = digitalRead(DATAPIN);
-   digitalWrite(BUILTIN_LED, bitState);
+   digitalWrite(LED_BUILTIN, bitState);
 
    // ignore if we haven't finished processing the previous 
    // received signal in the main loop.
@@ -256,9 +252,6 @@ void handler()
       syncFound = false;
       changeCount = 0;  // restart looking for data bits
      }
-     
-
-      digitalWrite(LAPIN, LOW);
    }
 
    // store data in ring buffer
@@ -273,7 +266,6 @@ void handler()
       changeCount = 0;  // restart looking for data bits
       syncIndex = ringIndex;
       dataIndex = (syncIndex + 1)%RING_BUFFER_SIZE;
-      digitalWrite(LAPIN, HIGH);
    }
 
    // If a sync has been found the start looking for the
@@ -291,13 +283,11 @@ void handler()
         // if too many bits received then reset and start over
          received = false;
          syncFound = false;
-         digitalWrite(LAPIN, LOW);
       }
       else
       {
          received = true;
          bytesReceived = 9;
-         digitalWrite(LAPIN, LOW);
       }
    }
 }
@@ -307,15 +297,11 @@ void handler()
 {
    Serial.begin(115200);
    Serial.println("Started.");
-   pinMode(DATAPIN, INPUT);             // data interrupt input
-   pinMode(BUILTIN_LED, OUTPUT);                 // LED output
-   pinMode(LAPIN, OUTPUT);
-   digitalWrite(LAPIN, LOW);
-   //attachInterrupt(INTERPUTPIN, handler, CHANGE);
+   pinMode(LED_BUILTIN, OUTPUT);              // LED output
+   pinMode(DATAPIN, INPUT);                   // data interrupt input
+   pinMode(SQUELCHPIN, OUTPUT);               // data squelch pin on radio module
    attachInterrupt(DATAPIN, handler, CHANGE);
-   pinMode(SQUELCHPIN, OUTPUT);         // data squelch pin on radio module
-   digitalWrite(SQUELCHPIN, HIGH);      // UN-squelch data
-   
+   digitalWrite(SQUELCHPIN, HIGH);            // UN-squelch data
 }
 
 
@@ -461,7 +447,7 @@ float acurite_getWindSpeed_kph (uint8_t highbyte, uint8_t lowbyte) {
     return speed_kph;
 }
 
-char * getWindDirection_Descr(byte b) {
+char const * const getWindDirection_Descr(byte b) {
   // 16 compass points, ccw from (NNW) to 15 (N), 
         // { "NW", "WSW", "WNW", "W", "NNW", "SW", "N", "SSW",
         //   "ENE", "SE", "E", "ESE", "NE", "SSE", "NNE", "S" };
@@ -621,7 +607,7 @@ void displayBitTiming()
 {
   unsigned int ringIndex;
   
-        Serial.print("syncFound = ");
+      Serial.print("syncFound = ");
       Serial.println(syncFound);
       Serial.print("changeCount = ");
       Serial.println(changeCount);
@@ -663,100 +649,95 @@ void displayBitTiming()
  */
 void loop()
 {
-   if( received == true )
-   {
-      // disable interrupt to avoid new data corrupting the buffer
-      //detachInterrupt(INTERPUTPIN);
-      detachInterrupt(DATAPIN);
-      // extract temperature value
-      unsigned int startIndex, stopIndex, ringIndex;
-      unsigned long temperature = 0;
-      bool fail = false;
+  if( received == true )
+  {
+    // disable interrupt to avoid new data corrupting the buffer
+    detachInterrupt(DATAPIN);
+    // extract temperature value
+    unsigned int ringIndex;
+    bool bitdecodefail = false;
 
 //define DISPLAY_BIT_TIMING 
 #ifdef DISPLAY_BIT_TIMING
-  displayBitTiming();
+    displayBitTiming();
 #endif // DISPLAY_BIT_TIMING
 
-//Decode to Hex Bytes
-      byte dataBytes[bytesReceived];
-      fail = false; // reset bit decode error flag
+    //Decode to Hex Bytes
+    byte dataBytes[bytesReceived];
+    bitdecodefail = false; // reset bit decode error flag
 
-      // clear the data bytes array
-      for( int i = 0; i < bytesReceived; i++ )
-      {
-        dataBytes[i] = 0;
-      }
-        
-      ringIndex = (syncIndex+1)%RING_BUFFER_SIZE;
+    // clear the data bytes array
+    for( int i = 0; i < bytesReceived; i++ )
+    {
+      dataBytes[i] = 0;
+    }
 
-      for( int i = 0; i < bytesReceived * 8; i++ )
-      {
-         int bit = convertTimingToBit( pulseDurations[ringIndex%RING_BUFFER_SIZE], 
-                                       pulseDurations[(ringIndex+1)%RING_BUFFER_SIZE] );
-                                       
-         if( bit < 0 )
-         {  
-            fail = true;
-            break;      // exit loop
-         }
-         else
-         {
-            dataBytes[i/8] |= bit << (7-(i%8));
-         }
-         
-         ringIndex += 2;
+    ringIndex = (syncIndex+1)%RING_BUFFER_SIZE;
+
+    for( int i = 0; i < bytesReceived * 8; i++ )
+    {
+      int bit = convertTimingToBit( pulseDurations[ringIndex%RING_BUFFER_SIZE], 
+                                    pulseDurations[(ringIndex+1)%RING_BUFFER_SIZE] );                                    
+      if( bit < 0 )
+      {  
+          bitdecodefail = true;
+          break;      // exit loop
       }
+      else
+      {
+          dataBytes[i/8] |= bit << (7-(i%8));
+      }
+      
+      ringIndex += 2;
+    }
 
      
 
 // Display the raw data received in hex
-#define DISPLAY_DATA_BYTES
+//#define DISPLAY_DATA_BYTES
 #ifdef DISPLAY_DATA_BYTES
- 
- if (fail)
+    if (bitdecodefail)
+    {
+      Serial.println("Data Byte Display : Decoding error.");
+    } 
+    else 
+    {
+      for( int i = 0; i < bytesReceived; i++ )
       {
-         Serial.println("Data Byte Display : Decoding error.");
-
-      } else {
-              for( int i = 0; i < bytesReceived; i++ )
-              {
-                PrintHex8(&dataBytes[i], 1);
-                //Serial.print(dataBytes[i], HEX);
-                Serial.print(",");
-              }
-
-      
-//              for( int i = 0; i < bytesReceived; i++ )
-//              {
-//                Serial.print(dataBytes[i], BIN);
-//                Serial.print(",");
-//              }
-//              //Serial.println();
-   }
-
+        PrintHex8(&dataBytes[i], 1);
+        Serial.print(",");
+      }
+    }
 #endif  
 
-if (fail)
-  {
+    if (bitdecodefail)
+    {
+      // do nothing and wiat for next sequence of bits
+    } 
+    else if (bytesReceived == 7)  
+    {
+      //Small Tower sensor with Temp and Humidity Only
+      decode_Acurite_6044(dataBytes);
+    } 
+    else if (bytesReceived==8) 
+    {
+      //5n1 tower sensor 
+      decode_5n1(dataBytes);
+    } 
+    else if (bytesReceived==9) 
+    {
+      //Lightening detector
+      decode_Acurite_6045(dataBytes);  
+    }       
+    // delay for 1 second to avoid repetitions
+    delay(1000);
+    received = false;
+    syncFound = false;
 
-  } else if (bytesReceived == 7)  {
-    //Small Tower sensor with Temp and Humidity Only
-    decode_Acurite_6044(dataBytes);
-  } else if (bytesReceived==8) {
-    //5n1 tower sensor 
-    decode_5n1(dataBytes);
-  } else if (bytesReceived==9) {
-    //Lightening detector
-    decode_Acurite_6045(dataBytes);  
-  }       
-       // delay for 1 second to avoid repetitions
-      delay(1000);
-      received = false;
-      syncFound = false;
+    // re-enable interrupt
+    //attachInterrupt(1, handler, CHANGE);
+    attachInterrupt(DATAPIN, handler, CHANGE);
+  } // received(true)
+} // loop()
 
-      // re-enable interrupt
-      //attachInterrupt(1, handler, CHANGE);
-      attachInterrupt(DATAPIN, handler, CHANGE);
-   }
-}
+
