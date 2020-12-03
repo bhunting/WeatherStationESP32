@@ -1,4 +1,3 @@
-#include <Arduino.h>
 
 /**********************************************************************
  * Arduino code decode several Acurite devices OTA data stream.
@@ -22,6 +21,100 @@
  *   Acurite Room Temp and Humidity 06044M (7 bytes)
  *    https://tinyurl.com/yc9fpx8q
  */
+
+// MQTT setup
+
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include "../../../credentials.h"
+
+// Update these with values suitable for your network.
+
+const char* ssid = _MY_WIFI_SSID;
+const char* password = _MY_WIFI_PWD;
+const char* mqtt_server = _MY_MQTT_SERVER;
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+unsigned long lastMsg = 0;
+#define MSG_BUFFER_SIZE	(50)
+char msg[MSG_BUFFER_SIZE];
+#define TOPIC_BUFFER_SIZE	(50)
+char topic[TOPIC_BUFFER_SIZE];
+uint16_t sensorID = 0;
+float temperature = 0;
+int humidity = 0;
+
+void setup_wifi() {
+
+  delay(10);
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  randomSeed(micros());
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+  // Switch on the LED if an 1 was received as first character
+  if ((char)payload[0] == '1') {
+    digitalWrite(LED_BUILTIN, LOW);   // Turn the LED on (Note that LOW is the voltage level
+    // but actually the LED is on; this is because
+    // it is active low on the ESP-01)
+  } else {
+    digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED off by making the voltage HIGH
+  }
+
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = "WEMOSTEMP-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str(), _MY_MQTT_NAME,_MY_MQTT_PWD)) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      client.publish("home/temperature", "INIT");
+      // ... and resubscribe
+      client.subscribe("inTopic");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+#include <Arduino.h>
+
 
 // ring buffer size has to be large enough to fit
 // data and sync signal, at least 120
@@ -297,6 +390,10 @@ ICACHE_RAM_ATTR void handler()
 {
    Serial.begin(115200);
    Serial.println("Started.");
+   setup_wifi();
+   client.setServer(mqtt_server, 1883);
+   client.setCallback(callback);
+
    pinMode(LED_BUILTIN, OUTPUT);              // LED output
    pinMode(DATAPIN, INPUT);                   // data interrupt input
    pinMode(SQUELCHPIN, OUTPUT);               // data squelch pin on radio module
@@ -730,13 +827,36 @@ void loop()
       decode_Acurite_6045(dataBytes);  
     }       
     // delay for 1 second to avoid repetitions
-    delay(1000);
+    //delay(1000);
     received = false;
     syncFound = false;
 
     // re-enable interrupt
     //attachInterrupt(1, handler, CHANGE);
     attachInterrupt(DATAPIN, handler, CHANGE);
+
+    if (!client.connected()) 
+    {
+      reconnect();
+    }
+    client.loop();
+
+    unsigned long now = millis();
+    if (now - lastMsg > 500) 
+    {
+      lastMsg = now;
+      snprintf (msg, MSG_BUFFER_SIZE, "%u;%.2f;%u",
+                  (((dataBytes[4] & 0x20) == 0x20)?1:0),
+                  convCF(acurite_getTemp_6044M(dataBytes[4], dataBytes[5])),
+                  acurite_getHumidity(dataBytes[3]));
+
+      sniprintf(topic, TOPIC_BUFFER_SIZE, "home/temperature/%04X", acurite_txr_getSensorId(dataBytes[0], dataBytes[1]));
+      Serial.print("Publish message: ");
+      Serial.print(topic);
+      Serial.print(" ");
+      Serial.println(msg);
+      client.publish(topic, msg);
+    }
   } // received(true)
 } // loop()
 
