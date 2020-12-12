@@ -61,10 +61,12 @@ unsigned long lastMsgSentTime = 0; // timer to throttle message rate
 #define PAYLOAD_BUFFER_SIZE (50)   // MQTT payload size max
 char payload[PAYLOAD_BUFFER_SIZE]; // MQTT payload buffer
 #define TOPIC_BUFFER_SIZE (50)
-char topic[TOPIC_BUFFER_SIZE]; // MQTT topic string
-uint16_t sensorID = 0;         // Sensor ID returned from the sensor
-int16_t temperature = 0;       // temperature in units of 0.1 C
-int16_t humidity = 0;
+char topic[TOPIC_BUFFER_SIZE];  // MQTT topic string
+static uint16_t batteryLow = 0;        // status of battery 0 = ok, 1 = low battery
+static uint16_t sensorID = 0;          // Sensor ID returned from the sensor
+static int16_t temperature = 0;        // temperature in units of 0.1 C
+static int16_t humidity = 0;
+
 
 // Connect ESP to you local wifi
 void setup_wifi()
@@ -180,6 +182,8 @@ void setup()
  */
 void loop()
 {
+  static uint16_t lastSensorIdSent = 0; // keep track of last msg id sent to avoid sending duplicates at a high rate
+
   if (receivedBitsRF433() == true)
   {
     // disable interrupt to avoid new data corrupting the buffer
@@ -245,16 +249,18 @@ void loop()
 
     // insert a wait time between receiving, decoding, and sending data to
     // limit double sends of RF data
+    sensorID = acurite_txr_getSensorId(dataBytes[0], dataBytes[1]);
     unsigned long now = millis();
-    if (now - lastMsgSentTime > 500)
+    // if sending a new reading from a new sensor OR been long enough between last msg sent
+    if((sensorID != lastSensorIdSent) || (now - lastMsgSentTime > 250))
     {
       lastMsgSentTime = now;
-      snprintf(payload, PAYLOAD_BUFFER_SIZE, "%u;%d;%d",
-               (((dataBytes[4] & 0x20) == 0x20) ? 1 : 0),
-               acurite_getTemp_6044M(dataBytes[4], dataBytes[5]),
-               acurite_getHumidity(dataBytes[3]));
-
-      sniprintf(topic, TOPIC_BUFFER_SIZE, "home/temperature/%04X", acurite_txr_getSensorId(dataBytes[0], dataBytes[1]));
+      lastSensorIdSent = sensorID; // update last sensor id to this sensor being sent
+      batteryLow = (((dataBytes[4] & 0x20) == 0x20) ? 1 : 0);
+      temperature = acurite_getTemp_6044M(dataBytes[4], dataBytes[5]);
+      humidity = acurite_getHumidity(dataBytes[3]);
+      snprintf(payload, PAYLOAD_BUFFER_SIZE, "%u;%d;%d", batteryLow, temperature, humidity);
+      sniprintf(topic, TOPIC_BUFFER_SIZE, "home/temperature/%04X", sensorID);
       Serial.print("Publish message: ");
       Serial.print(topic);
       Serial.print(" ");
