@@ -6,11 +6,14 @@
 // data and sync signal, at least 120 bytes,
 // round up to 128 for now
 #define RING_BUFFER_SIZE 152
-#define SYNC_HIGH 600 // pulse lengths for OOK from RF radio
-#define SYNC_LOW 600
+#define SYNC_HIGH (600) // pulse lengths for OOK from RF radio
+#define SYNC_LOW (600)
+#define SYNC_MAX (600)
 #define PULSE_LONG 400
 #define PULSE_SHORT 220
 #define PULSE_RANGE 100
+#define PULSE_VALID_MAX (SYNC_MAX+PULSE_RANGE)
+#define PULSE_VALID_MIN (PULSE_SHORT-PULSE_RANGE)
 
 //#define BIT1_HIGH       PULSE_LONG
 //#define BIT1_LOW        PULSE_SHORT
@@ -61,13 +64,13 @@
 // buffers and indexes for reading bits from RF 433 MHz radio
 // The pulse durations are the measured time in micro seconds between
 // pulse edges.
-static unsigned long pulseDurations[RING_BUFFER_SIZE];
-static unsigned int syncIndex = 0; // index of the last bit time of the sync signal
-static unsigned int dataIndex = 0; // index of the first bit time of the data bits (syncIndex+1)
-static bool syncFound = false;     // true if sync pulses found
-static bool receivedBits = false;      // true if sync plus enough bits found
-static unsigned int changeCount = 0;
-static unsigned int bytesReceived = 0;
+static volatile unsigned long pulseDurations[RING_BUFFER_SIZE];
+static volatile unsigned int syncIndex = 0; // index of the last bit time of the sync signal
+static volatile unsigned int dataIndex = 0; // index of the first bit time of the data bits (syncIndex+1)
+static volatile bool syncFound = false;     // true if sync pulses found
+static volatile bool receivedBits = false;      // true if sync plus enough bits found
+static volatile unsigned int changeCount = 0;
+static volatile unsigned int bytesReceived = 0;
 
 /*
  * helper code to print formatted hex 
@@ -154,33 +157,15 @@ ICACHE_RAM_ATTR void handler()
   // If we ever get a really short, or really long,
   // pulse we know there is an error in the bit stream
   // and should start over.
-  if ((duration > (PULSE_LONG + PULSE_RANGE)) || (duration < (PULSE_SHORT - PULSE_RANGE)))
+  if ((duration > (PULSE_VALID_MAX)) || (duration < (PULSE_VALID_MIN)))
   {
-    // if we get a bad pulse width check to see if we have enough bits to create
-    // a viable message.
-    // Check to see if we have received a minimum number of bits we could take
-    if (syncFound && (changeCount >= DATABITSEDGES_MIN))
-    {
-      if (changeCount >= DATABITSEDGES_MID)
-      {
-        bytesReceived = 8;
-      }
-      else
-      {
-        bytesReceived = 7;
-      }
-      receivedBits = true;
-      return;
-    }
-    else
-    {
-      receivedBits = false;
-      syncFound = false;
-      changeCount = 0; // restart looking for data bits
-    }
+    receivedBits = false;
+    syncFound = false;
+    changeCount = 0; // restart looking for data bits
+    return; // might as well bail, this is not a good pulse
   }
 
-  // not a bad pulse width so grab the edge time and
+  // pulse width is within min/max so grab the edge time and
   // store data in ring buffer
   ringIndex = (ringIndex + 1) % RING_BUFFER_SIZE;
   pulseDurations[ringIndex] = duration;
@@ -200,20 +185,21 @@ ICACHE_RAM_ATTR void handler()
   if (syncFound)
   {
     // if not enough bits yet, no message received yet
-    if (changeCount < DATABITSEDGES_MAX)
+    if (changeCount < DATABITSEDGES_MIN)
     {
       receivedBits = false;
     }
-    else if (changeCount > DATABITSEDGES_MAX)
+    else if (changeCount > DATABITSEDGES_MIN)
     {
       // if too many bits received then reset and start over
       receivedBits = false;
       syncFound = false;
+      changeCount = 0; // restart looking for data bits
     }
     else
     {
       receivedBits = true;
-      bytesReceived = 9;
+      bytesReceived = 7;
     }
   }
 }
@@ -279,18 +265,18 @@ void displayBitTiming()
 void setupRF433()
 {
   pinMode(LED_BUILTIN, OUTPUT); // LED output
-  pinMode(DATAPIN, INPUT);      // data interrupt input
+  pinMode(DATAPIN, INPUT_PULLUP);      // data interrupt input
   pinMode(SQUELCHPIN, OUTPUT);  // data squelch pin on radio module
 }
 
 void attachRF433int()
 {
-  attachInterrupt(DATAPIN, handler, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(DATAPIN), handler, CHANGE);
 }
 
 void detachRF433int()
 {
-    detachInterrupt(DATAPIN);
+    detachInterrupt(digitalPinToInterrupt(DATAPIN));
 }
 
 void squelchRF433()
@@ -351,4 +337,5 @@ void resetBitStreamRF433()
     receivedBits = false;
     syncFound = false;
     changeCount = 0;
+    bytesReceived = 0;
 }
