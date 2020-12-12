@@ -226,6 +226,7 @@ void loop()
     if (bitdecodefail)
     {
       // do nothing and wait for next sequence of bits
+      Serial.println("bitdecodefail : Decoding error.");
     }
     else if (recvByteCount == 7)
     {
@@ -243,32 +244,36 @@ void loop()
       decode_Acurite_6045(dataBytes);
     }
 
-    // MQTT send
+    // MQTT connection check
     if (!client.connected())
     {
       reconnect();
     }
     client.loop();
 
-    // insert a wait time between receiving, decoding, and sending data to
-    // limit double sends of RF data
-    sensorID = acurite_txr_getSensorId(dataBytes[0], dataBytes[1]);
-    unsigned long now = millis();
-    // if sending a new reading from a new sensor OR been long enough between last msg sent
-    if((sensorID != lastSensorIdSent) || ((now - lastMsgSentTime) > 250))
+    // if decoded msg is ok then send via mqtt
+    if( !bitdecodefail)
     {
-      lastMsgSentTime = now;
-      lastSensorIdSent = sensorID; // update last sensor id to this sensor being sent
-      batteryLow = (((dataBytes[4] & 0x20) == 0x20) ? 1 : 0);
-      temperature = acurite_getTemp_6044M(dataBytes[4], dataBytes[5]);
-      humidity = acurite_getHumidity(dataBytes[3]);
-      snprintf(payload, PAYLOAD_BUFFER_SIZE, "%u;%d;%d", batteryLow, temperature, humidity);
-      sniprintf(topic, TOPIC_BUFFER_SIZE, "home/temperature/%04X", sensorID);
-      Serial.print("Publish message: ");
-      Serial.print(topic);
-      Serial.print(" ");
-      Serial.println(payload);
-      client.publish(topic, payload);
+      // insert a wait time between receiving, decoding, and sending data to
+      // limit double sends of RF data
+      sensorID = acurite_txr_getSensorId(dataBytes[0], dataBytes[1]);
+      unsigned long now = millis();
+      // if sending a new reading from a new sensor OR been long enough between last msg sent
+      if((sensorID != lastSensorIdSent) || ((now - lastMsgSentTime) > 250))
+      {
+        lastMsgSentTime = now;
+        lastSensorIdSent = sensorID; // update last sensor id to this sensor being sent
+        batteryLow = (((dataBytes[4] & 0x20) == 0x20) ? 1 : 0);
+        temperature = acurite_getTemp_6044M(dataBytes[4], dataBytes[5]);
+        humidity = acurite_getHumidity(dataBytes[3]);
+        snprintf(payload, PAYLOAD_BUFFER_SIZE, "%u;%d;%d", batteryLow, temperature, humidity);
+        sniprintf(topic, TOPIC_BUFFER_SIZE, "home/temperature/%04X", sensorID);
+        Serial.print("Publish message: ");
+        Serial.print(topic);
+        Serial.print(" ");
+        Serial.println(payload);
+        client.publish(topic, payload);
+      }
     }
   } // received(true)
 } // loop()
