@@ -194,10 +194,18 @@ void loop()
     displayBitTiming();
 #endif // DISPLAY_BIT_TIMING
 
-  byte dataBytes[MAX_DATA_BYTES_RECV];
-  bool bitdecodefail = decodeBitstreamRF433( dataBytes, std::min(bytesRecvCntRF433(), (unsigned int)MAX_DATA_BYTES_RECV));
+    // decode received bits into a local buffer
+    byte dataBytes[MAX_DATA_BYTES_RECV];
+    uint16 recvByteCount = std::min(bytesRecvCntRF433(), (unsigned int)MAX_DATA_BYTES_RECV);
+    bool bitdecodefail = decodeBitstreamRF433( dataBytes, recvByteCount);
 
-// Display the raw data received in hex
+    // after decoding bit stream reset receiver and turn on interrupts
+    resetBitStreamRF433();
+    // re-enable interrupt
+    attachRF433int();
+
+    // next move on to displaying and sending received data
+    // Display the raw data received in hex
 //#define DISPLAY_DATA_BYTES
 #ifdef DISPLAY_DATA_BYTES
     if (bitdecodefail)
@@ -219,28 +227,23 @@ void loop()
     {
       // do nothing and wait for next sequence of bits
     }
-    else if (bytesRecvCntRF433() == 7)
+    else if (recvByteCount == 7)
     {
       //Small Tower sensor with Temp and Humidity Only
       decode_Acurite_6044(dataBytes);
     }
-    else if (bytesRecvCntRF433() == 8)
+    else if (recvByteCount == 8)
     {
       //5n1 tower sensor
       decode_5n1(dataBytes);
     }
-    else if (bytesRecvCntRF433() == 9)
+    else if (recvByteCount == 9)
     {
       //Lightening detector
       decode_Acurite_6045(dataBytes);
     }
-    // delay for 1 second to avoid repetitions
-    //delay(1000);
-    resetBitStreamRF433();
 
-    // re-enable interrupt
-    attachRF433int();
-
+    // MQTT send
     if (!client.connected())
     {
       reconnect();
@@ -252,7 +255,7 @@ void loop()
     sensorID = acurite_txr_getSensorId(dataBytes[0], dataBytes[1]);
     unsigned long now = millis();
     // if sending a new reading from a new sensor OR been long enough between last msg sent
-    if((sensorID != lastSensorIdSent) || (now - lastMsgSentTime > 250))
+    if((sensorID != lastSensorIdSent) || ((now - lastMsgSentTime) > 250))
     {
       lastMsgSentTime = now;
       lastSensorIdSent = sensorID; // update last sensor id to this sensor being sent
