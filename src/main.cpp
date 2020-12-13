@@ -222,6 +222,8 @@ void loop()
     }
 #endif
 
+//#define PRINT_DECODED_VALUES
+#ifdef PRINT_DECODED_VALUES
     // extract temperature value
     if (bitdecodefail)
     {
@@ -243,6 +245,8 @@ void loop()
       //Lightening detector
       decode_Acurite_6045(dataBytes);
     }
+#endif
+
 
     // MQTT connection check
     if (!client.connected())
