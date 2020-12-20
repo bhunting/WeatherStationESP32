@@ -32,6 +32,7 @@
 // MQTT setup
 #include <ESP8266WiFi.h>          // required for wifi connection to MQTT broker
 #include <PubSubClient.h>         // MQTT library
+#include <ArduinoJson.h>          // JSON formatting library
 #include "../../../credentials.h" // My network and MQTT credential, this file not
                                   // distributed in the GIT repository.  You will
                                   // need to create you own file with the following
@@ -55,17 +56,19 @@ const char *ssid = _MY_WIFI_SSID;
 const char *password = _MY_WIFI_PWD;
 const char *mqtt_server = _MY_MQTT_SERVER;
 
-WiFiClient espClient;              // wireless endpoint
-PubSubClient client(espClient);    // MQTT endpoint
-unsigned long lastMsgSentTime = 0; // timer to throttle message rate
-#define PAYLOAD_BUFFER_SIZE (50)   // MQTT payload size max
-char payload[PAYLOAD_BUFFER_SIZE]; // MQTT payload buffer
-#define TOPIC_BUFFER_SIZE (50)
-char topic[TOPIC_BUFFER_SIZE];  // MQTT topic string
-static uint16_t batteryLow = 0;        // status of battery 0 = ok, 1 = low battery
-static uint16_t sensorID = 0;          // Sensor ID returned from the sensor
-static int16_t temperature = 0;        // temperature in units of 0.1 C
+WiFiClient espClient;               // wireless endpoint
+PubSubClient client(espClient);     // MQTT endpoint
+unsigned long lastMsgSentTime = 0;  // timer to throttle message rate
+#define PAYLOAD_BUFFER_SIZE (64)    // MQTT payload size max
+char payload[PAYLOAD_BUFFER_SIZE];  // MQTT payload buffer
+#define TOPIC_BUFFER_SIZE (32)      // big enough for json formatted string
+char topic[TOPIC_BUFFER_SIZE];      // MQTT topic string
+static uint16_t batteryLow = 0;     // status of battery 0 = ok, 1 = low battery
+static uint16_t sensorID = 0;       // Sensor ID returned from the sensor
+static int16_t temperature = 0;     // temperature in units of 0.1 C
 static int16_t humidity = 0;
+
+StaticJsonDocument<200> doc;
 
 
 // Connect ESP to you local wifi
@@ -270,7 +273,18 @@ void loop()
         batteryLow = (((dataBytes[4] & 0x20) == 0x20) ? 1 : 0);
         temperature = acurite_getTemp_6044M(dataBytes[4], dataBytes[5]);
         humidity = acurite_getHumidity(dataBytes[3]);
-        snprintf(payload, PAYLOAD_BUFFER_SIZE, "%u;%d;%d", batteryLow, temperature, humidity);
+
+        char hex[5];
+        sprintf(hex, "%04X", sensorID);
+
+        //doc["id"] = sensorID;
+        doc["id"] = hex;
+        doc["battery"] = batteryLow;
+        doc["temperature"] = temperature;
+        doc["humidity"] = humidity;
+
+        // Generate the minified JSON and send it to the Serial port.
+        serializeJson(doc, payload, sizeof(payload));
         sniprintf(topic, TOPIC_BUFFER_SIZE, "home/temperature/%04X", sensorID);
         Serial.print("Publish message: ");
         Serial.print(topic);
