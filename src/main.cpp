@@ -1,4 +1,11 @@
 
+
+
+#include <iostream> 
+#include <iterator> 
+#include <map> 
+  
+
 /**********************************************************************
  * MQTT client to read and publish weather data from Accurite family
  * of RF 433MHz sensors.
@@ -159,6 +166,7 @@ void reconnect()
 #include "rf433recv.h"
 #include "decoder_accurite.h"
 
+
 // Arduino framework setup call
 void setup()
 {
@@ -185,6 +193,14 @@ void setup()
  */
 void loop()
 {
+  using std::map;
+  using std::pair;
+  using std::cout;
+  using std::endl;
+  // empty map container 
+  static map<unsigned short, unsigned long> sensorReported; 
+  static map<unsigned short, unsigned long>::iterator itr; 
+
   static uint16_t lastSensorIdSent = 0; // keep track of last msg id sent to avoid sending duplicates at a high rate
 
   if (receivedBitsRF433() == true)
@@ -261,17 +277,72 @@ void loop()
     // if decoded msg is ok then send via mqtt
     if( !bitdecodefail)
     {
-      // insert a wait time between receiving, decoding, and sending data to
-      // limit double sends of RF data
-      sensorID = acurite_txr_getSensorId(dataBytes[0], dataBytes[1]);
-      unsigned long now = millis();
-      // if sending a new reading from a new sensor OR been long enough between last msg sent
-      if((sensorID != lastSensorIdSent) || ((now - lastMsgSentTime) > 250))
+      bool sendDataUpdate = true; // default to sending this data, unless a data valid check fails below
+
+      // if we got here the low level bit timing decode did not detect an error
+      // Now check for decode error resulting in an obvious bad reading and discard
+      // Assume 130 F is too hot, shouldn't ever get that hot
+      // Assume -40 F is too cold, if it's that cold it doesn't really matter anymore
+      // Values returned from sensor are in 10ths of degrees C
+      // ((130-32)/1.8)*10 = 544 ... 130 F = 54.4 C
+      // ((-40-32)/1.8)*10 = -400 ... -40 F = -40 C
+      #define TEMPERATURE_VALID_MAX (544)
+      #define TEMPERATURE_VALID_MIN (-400)
+      temperature = acurite_getTemp_6044M(dataBytes[4], dataBytes[5]);
+      if( sendDataUpdate && ((TEMPERATURE_VALID_MAX < temperature) || (TEMPERATURE_VALID_MIN > temperature)) )
       {
-        lastMsgSentTime = now;
-        lastSensorIdSent = sensorID; // update last sensor id to this sensor being sent
+        Serial.print("Temperature reading out of bound = ");
+        Serial.println( temperature );
+        sendDataUpdate = false;
+      }
+
+      sensorID = acurite_txr_getSensorId(dataBytes[0], dataBytes[1]);
+      // next check if a throttle time has elapsed for this sensor
+      if( sendDataUpdate )
+      {
+        // insert a wait time between receiving, decoding, and sending data to limit double sends of RF data
+        // Throttle sending of data by checking the last time this data sent
+        unsigned long now = millis();
+        // update interval as 5 minutes in milliseconds
+        #define DATA_UPDATE_INTERVAL (5*60*1000)  // 5 minutes min time between sending updates
+        // #define DATA_UPDATE_INTERVAL (30000) // test value of 30 seconds
+
+        if( (itr = sensorReported.find(sensorID)) != sensorReported.end() )
+        {
+          Serial.println("Found element in map; check update interval, update timestamp");
+          if( (now - itr->second) > DATA_UPDATE_INTERVAL )
+          {
+            Serial.println("Send update data this interval");
+            // update last sent value
+            itr->second = now;
+          }
+          else
+          {
+            Serial.println( "data update interval too short, do not send update");
+            sendDataUpdate = false;
+          }
+        }
+        else
+        {
+          Serial.println("sensor not found, inserting new element ");
+          sensorReported.insert(pair<unsigned short, unsigned long>(sensorID, millis())); 
+        }
+
+        char buf[128];
+        Serial.println("sensorReported map ----"); 
+        for (itr = sensorReported.begin(); itr != sensorReported.end(); ++itr) 
+        { 
+          snprintf(buf, sizeof(buf), "%04X  %lu", itr->first, itr->second);
+          Serial.println( buf );
+        }
+      }
+      // if sending a new reading from a new sensor OR been long enough between last msg sent
+      // AND temperature value read is within bound (ie not a bad reading)
+      if( sendDataUpdate )
+      {
+        //lastMsgSentTime = now;
+        //lastSensorIdSent = sensorID; // update last sensor id to this sensor being sent
         batteryLow = (((dataBytes[4] & 0x20) == 0x20) ? 1 : 0);
-        temperature = acurite_getTemp_6044M(dataBytes[4], dataBytes[5]);
         humidity = acurite_getHumidity(dataBytes[3]);
 
         char hex[5];
@@ -291,7 +362,7 @@ void loop()
         Serial.print(" ");
         Serial.println(payload);
         client.publish(topic, payload);
-      }
-    }
+      } // sendDataUpdate
+    } // bitdecodefail
   } // received(true)
 } // loop()
