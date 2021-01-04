@@ -167,9 +167,28 @@ void reconnect()
 #include "decoder_accurite.h"
 
 
+//  using std::map;
+//  using std::pair;
+//  using std::cout;
+//  using std::endl;
+  // empty map container 
+  static std::map<unsigned short, unsigned long> sensorReported; 
+
 // Arduino framework setup call
 void setup()
 {
+  using std::map;
+  using std::pair;
+  using std::cout;
+  using std::endl;
+
+  sensorReported.insert(pair<unsigned short, unsigned long>(0x0C34, millis())); 
+  sensorReported.insert(pair<unsigned short, unsigned long>(0x1E09, millis())); 
+  sensorReported.insert(pair<unsigned short, unsigned long>(0x26ED, millis())); 
+  sensorReported.insert(pair<unsigned short, unsigned long>(0x36E7, millis())); 
+  sensorReported.insert(pair<unsigned short, unsigned long>(0x0604, millis())); 
+  sensorReported.insert(pair<unsigned short, unsigned long>(0x386C, millis())); 
+
   Serial.begin(115200);
   Serial.println("Started.");
   setup_wifi();
@@ -198,8 +217,8 @@ void loop()
   using std::cout;
   using std::endl;
   // empty map container 
-  static map<unsigned short, unsigned long> sensorReported; 
-  static map<unsigned short, unsigned long>::iterator itr; 
+//  static map<unsigned short, unsigned long> sensorReported; 
+  map<unsigned short, unsigned long>::iterator itr; 
 
   static uint16_t lastSensorIdSent = 0; // keep track of last msg id sent to avoid sending duplicates at a high rate
 
@@ -305,7 +324,7 @@ void loop()
         unsigned long now = millis();
         // update interval as 5 minutes in milliseconds
         #define DATA_UPDATE_INTERVAL (5*60*1000)  // 5 minutes min time between sending updates
-        // #define DATA_UPDATE_INTERVAL (30000) // test value of 30 seconds
+        //#define DATA_UPDATE_INTERVAL (30000) // test value of 30 seconds
 
         if( (itr = sensorReported.find(sensorID)) != sensorReported.end() )
         {
@@ -324,8 +343,10 @@ void loop()
         }
         else
         {
-          Serial.println("sensor not found, inserting new element ");
-          sensorReported.insert(pair<unsigned short, unsigned long>(sensorID, millis())); 
+          //Serial.println("sensor not found, inserting new element ");
+          //sensorReported.insert(pair<unsigned short, unsigned long>(sensorID, millis())); 
+          // unknown sensor when using pre-defined sensor ids, skip it because it is assuredly a bit error in the id
+          sendDataUpdate = false;
         }
 
         char buf[128];
